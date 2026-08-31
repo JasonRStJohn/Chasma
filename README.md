@@ -6,7 +6,7 @@
 
 ## 🌌 Overview & The *Ebonstar* Heritage
 
-**Chasma** is a spiritual successor and homage to the classic 1982 multiplayer title ***Ebonstar*** (created by Danielle Bunten Berry / Ozark Softscape).
+**Chasma** is a spiritual successor and homage to the classic 1988 multiplayer Amiga title ***Ebonstar*** (developed by The Dreamers Guild, designed and programmed by Robert "Wolf" McNally, and published by MicroIllusions).
 
 In *Ebonstar*, players engaged in high-stakes space duels orbiting a central black hole, where weapons were designed not to destroy ships directly, but to knock and shove opponents into the singularity's inescapable gravity well.
 
