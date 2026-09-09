@@ -154,6 +154,49 @@ class GameView(arcade.View):
                 self.projectiles.append(proj)
                 self.window.sound.play("fire")
 
+        # --- Ship-to-ship collisions ---
+        for i in range(len(self.players)):
+            p1 = self.players[i]
+            if not p1.alive or p1.spiraling:
+                continue
+            for j in range(i + 1, len(self.players)):
+                p2 = self.players[j]
+                if not p2.alive or p2.spiraling:
+                    continue
+
+                dx = p2.center_x - p1.center_x
+                dy = p2.center_y - p1.center_y
+                dist = math.hypot(dx, dy)
+                min_dist = p1.collision_radius + p2.collision_radius
+
+                if dist < min_dist and dist > 0.0001:
+                    # 1. Positional separation (prevent clipping)
+                    overlap = min_dist - dist
+                    nx = dx / dist
+                    ny = dy / dist
+                    p1.center_x -= nx * (overlap * 0.5)
+                    p1.center_y -= ny * (overlap * 0.5)
+                    p2.center_x += nx * (overlap * 0.5)
+                    p2.center_y += ny * (overlap * 0.5)
+
+                    # 2. Elastic bounce impulse with live-tunable strength
+                    rvx = p2.velocity_x - p1.velocity_x
+                    rvy = p2.velocity_y - p1.velocity_y
+                    vel_along_normal = rvx * nx + rvy * ny
+
+                    if vel_along_normal < 0:
+                        restitution = 0.8
+                        impulse_mag = -(1 + restitution) * vel_along_normal * 0.5
+                        bump_boost = getattr(tuning, "SHIP_COLLISION_STRENGTH", 1.2)
+                        total_impulse = (impulse_mag + 1.0) * bump_boost
+
+                        p1.velocity_x -= nx * total_impulse
+                        p1.velocity_y -= ny * total_impulse
+                        p2.velocity_x += nx * total_impulse
+                        p2.velocity_y += ny * total_impulse
+
+                        self.window.sound.play("hit")
+
         # --- Spiral death sequence ---
         for i, player in enumerate(self.players):
             if not player.alive:

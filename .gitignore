@@ -47,3 +47,6 @@ Thumbs.db
 
 # Local live-tuning overrides (generated at runtime when tweaking physics)
 tuning.overrides.json
+
+# Planning and architecture docs
+planning/

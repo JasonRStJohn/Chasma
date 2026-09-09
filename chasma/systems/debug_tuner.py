@@ -25,6 +25,8 @@ from chasma.config.settings import SCREEN_HEIGHT
 
 # (param_name, small_step, big_step)
 _PARAMS = [
+    ("SHIP_SCALE",               0.1,   0.5),
+    ("SHIP_COLLISION_STRENGTH",  0.1,   0.5),
     ("GRAVITY_STRENGTH",        100,   500),
     ("GRAVITY_OUTER_RADIUS",     10,    40),
     ("GRAVITY_INNER_RADIUS",      2,    10),

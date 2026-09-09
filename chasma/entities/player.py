@@ -1,6 +1,6 @@
 import arcade
 import math
-from arcade.shape_list import create_polygon
+from arcade.shape_list import ShapeElementList, create_polygon
 
 from chasma.config.settings import *
 from chasma.config import tuning
@@ -16,20 +16,12 @@ class Player(BaseEntity):
     def __init__(self, player_color, center_x, center_y):
         super().__init__(center_x, center_y)
 
-        # --- Define the ship's geometry ---
-        # Main gray body
-        ship_points = ((-10, -10), (10, -10), (0, 20))
-        main_shape = create_polygon(ship_points, ChasmaColors.SHIP_GRAY)
-        self.shape_list.append(main_shape)
-
-        # Colored back part
-        color_points = ((-10, -10), (10, -10), (0, -3))
-        color_shape = create_polygon(color_points, player_color)
-        self.shape_list.append(color_shape)
+        self.player_color = player_color
+        self._current_scale = getattr(tuning, "SHIP_SCALE", 2.0)
+        self._build_shapes(self._current_scale)
 
         # --- Player-specific attributes ---
         self.thrust = 0
-        self.player_color = player_color
         self.lives = PLAYER_LIVES
         self.alive = True
         self.fire_cooldown = 0
@@ -38,6 +30,23 @@ class Player(BaseEntity):
         self.spiraling = False
         self.spiral_timer = 0
         self.respawn_timer = -1   # -1 = not pending; >=0 = countdown to respawn
+
+    def _build_shapes(self, scale):
+        """Construct the polygon meshes at the current scale."""
+        self.shape_list = ShapeElementList()
+        s = float(scale)
+        ship_points = ((-10 * s, -10 * s), (10 * s, -10 * s), (0, 20 * s))
+        main_shape = create_polygon(ship_points, ChasmaColors.SHIP_GRAY)
+        self.shape_list.append(main_shape)
+
+        color_points = ((-10 * s, -10 * s), (10 * s, -10 * s), (0, -3 * s))
+        color_shape = create_polygon(color_points, self.player_color)
+        self.shape_list.append(color_shape)
+        self._current_scale = s
+
+    @property
+    def collision_radius(self):
+        return 14.0 * getattr(tuning, "SHIP_SCALE", 2.0)
 
     def apply_input(self, input_state):
         """Apply an InputState to set rotation and thrust."""
@@ -96,8 +105,8 @@ class Player(BaseEntity):
         self.fire_cooldown = BLASTER_COOLDOWN
 
         # Spawn projectile at the nose of the ship
-        import math
-        nose_dist = 22  # just past the ship's tip
+        scale = getattr(tuning, "SHIP_SCALE", 2.0)
+        nose_dist = 22 * scale  # just past the ship's tip
         spawn_x = self.center_x + math.sin(math.radians(self.angle)) * nose_dist
         spawn_y = self.center_y + math.cos(math.radians(self.angle)) * nose_dist
 
@@ -113,21 +122,28 @@ class Player(BaseEntity):
         """Draw the ship and thrust flame."""
         if not self.alive:
             return
+
+        # Rebuild polygon meshes if SHIP_SCALE was tuned live
+        current_scale = getattr(tuning, "SHIP_SCALE", 2.0)
+        if self._current_scale != current_scale:
+            self._build_shapes(current_scale)
+
         super().draw()
 
         # --- Thrust Flame ---
         if self.thrust > 0:
+            scale = self._current_scale
             thrust_ratio = self.thrust / THRUST_FORCE
-            flame_length = FLAME_MIN_LENGTH + thrust_ratio * (FLAME_MAX_LENGTH - FLAME_MIN_LENGTH)
-            flame_half_w = (FLAME_WIDTH / 2) * (0.5 + 0.5 * thrust_ratio)
+            flame_length = (FLAME_MIN_LENGTH + thrust_ratio * (FLAME_MAX_LENGTH - FLAME_MIN_LENGTH)) * (scale / 2.0)
+            flame_half_w = (FLAME_WIDTH / 2.0) * (0.5 + 0.5 * thrust_ratio) * (scale / 2.0)
 
             # Flame points in local space (behind the ship)
             angle_rad = math.radians(self.angle)
             cos_a = math.cos(angle_rad)
             sin_a = math.sin(angle_rad)
 
-            # Ship back center is at (0, -10) in local space
-            back_y = -10
+            # Ship back center is at (0, -10 * scale) in local space
+            back_y = -10.0 * scale
             # Rotate and translate each flame vertex
             def to_world(lx, ly):
                 return (

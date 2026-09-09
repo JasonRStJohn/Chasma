@@ -16,6 +16,8 @@ from pathlib import Path
 from chasma.config import settings
 
 _TUNEABLE = [
+    "SHIP_SCALE",
+    "SHIP_COLLISION_STRENGTH",
     "GRAVITY_STRENGTH",
     "GRAVITY_OUTER_RADIUS",
     "GRAVITY_INNER_RADIUS",
