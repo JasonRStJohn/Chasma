@@ -10,6 +10,7 @@ from chasma.entities.hollowstar import Hollowstar
 from chasma.entities.player import Player
 from chasma.systems.debug_tuner import DebugTuner
 from chasma.systems.input_manager import InputManager
+from chasma.ai.ai_controller import AIController
 
 
 # Map color names to actual colors
@@ -31,6 +32,7 @@ class GameView(arcade.View):
         self.players = []
         self.projectiles = []
         self.input_manager = None
+        self.ai_controller = AIController()
         self.pause_held = False
         self.debug_tuner = DebugTuner()
 
@@ -41,11 +43,12 @@ class GameView(arcade.View):
 
         # Use the controllers already opened by ChasmaGame
         self.input_manager = InputManager(self.window.menu_controllers)
-        num_players = self.input_manager.num_players
+        num_human_players = self.input_manager.num_players
 
-        # --- Create players ---
+        # --- Create players (Always 4 players in arena; AI fills remaining slots) ---
+        TOTAL_PLAYERS = 4
         self.players = []
-        for i in range(num_players):
+        for i in range(TOTAL_PLAYERS):
             color_name = PLAYER_COLORS[i]
             color = _COLOR_MAP[color_name]
             spawn_x, spawn_y = PLAYER_SPAWNS[i]
@@ -54,6 +57,7 @@ class GameView(arcade.View):
                 center_x=spawn_x,
                 center_y=spawn_y,
             )
+            player.is_ai = (i >= num_human_players)
             self.players.append(player)
 
         # --- Create Hollowstar in the center ---
@@ -65,9 +69,10 @@ class GameView(arcade.View):
         # HUD text objects — one per player
         self.lives_texts = []
         for i, player in enumerate(self.players):
+            label = f"P{i+1} [AI]" if player.is_ai else f"P{i+1}"
             text = arcade.Text(
-                f"P{i+1}: {player.lives}",
-                ARENA_LEFT + 10 + i * 100, ARENA_TOP + 10,
+                f"{label}: {player.lives}",
+                ARENA_LEFT + 10 + i * 140, ARENA_TOP + 10,
                 player.player_color, font_size=14,
             )
             self.lives_texts.append(text)
@@ -91,7 +96,8 @@ class GameView(arcade.View):
 
         # HUD
         for i, player in enumerate(self.players):
-            self.lives_texts[i].text = f"P{i+1}: OUT" if player.lives <= 0 else f"P{i+1}: {player.lives}"
+            label = f"P{i+1} [AI]" if player.is_ai else f"P{i+1}"
+            self.lives_texts[i].text = f"{label}: OUT" if player.lives <= 0 else f"{label}: {player.lives}"
             self.lives_texts[i].draw()
 
         self.debug_tuner.draw_overlay(self.hollowstar.center_x, self.hollowstar.center_y)
@@ -132,8 +138,12 @@ class GameView(arcade.View):
                     player.respawn(spawn_x, spawn_y)
                     player.alive = True
 
-            if player.alive and i < len(input_states):
-                player.apply_input(input_states[i])
+            if player.alive:
+                if getattr(player, "is_ai", False):
+                    ai_input = self.ai_controller.get_input_state(player, self.players, self.hollowstar)
+                    player.apply_input(ai_input)
+                elif i < len(input_states):
+                    player.apply_input(input_states[i])
             player.update()
             if player.alive and not player.spiraling:
                 self.arena.bounce(player, dampening=0.5)

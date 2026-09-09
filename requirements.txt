@@ -1,1 +1,7 @@
 arcade>=3.0.0
+onnxruntime>=1.18.0
+
+# Optional for retraining RL bots:
+# gymnasium>=1.0.0
+# stable-baselines3>=2.3.0
+# torch>=2.2.0
