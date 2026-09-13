@@ -76,6 +76,7 @@ def train_chasma_pilot(
             n_steps=2048,
             batch_size=64,
             gamma=0.99,
+            ent_coef=0.01,
             verbose=1,
         )
         model.learn(total_timesteps=total_timesteps)
@@ -116,4 +117,21 @@ def train_chasma_pilot(
 
 
 if __name__ == "__main__":
-    train_chasma_pilot(total_timesteps=120_000, retrain=True)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Train Chasma AI pilot.")
+    parser.add_argument(
+        "steps",
+        nargs="?",
+        type=int,
+        default=250_000,
+        help="Total training timesteps (default: 250,000)",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from existing checkpoint instead of retraining from scratch",
+    )
+    args = parser.parse_args()
+
+    train_chasma_pilot(total_timesteps=args.steps, retrain=not args.resume)

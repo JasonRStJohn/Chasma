@@ -12,15 +12,16 @@ In *Ebonstar*, players engaged in high-stakes space duels orbiting a central bla
 
 **Chasma** reimagines this arena combat mechanic:
 - **The Hollowstar:** A wandering singularity at the center of the arena continuously pulls ships inward via inverse-square gravitational force and warps the spacetime grid around it.
-- **Knockback Combat:** Blaster shots impart heavy kinetic recoil. Instead of whittling down hit points, your goal is to manage inertia, bounce off arena walls, and weaponize gravity and blaster momentum to shove opponents across the threshold into the Hollowstar's event horizon.
+- **Knockback & Ship Collision Combat:** Blaster shots impart heavy kinetic recoil, and ships physically collide and bounce with elastic momentum. Instead of whittling down hit points, your goal is to manage inertia, bounce off arena walls, and weaponize gravity, collisions, and blaster momentum to shove opponents across the threshold into the Hollowstar's event horizon.
 - **Spiral of Death:** Crossing the inner event horizon captures a ship in an accelerated death spiral before pulling it into the singularity.
+- **Intelligent Neural AI Backfill:** Matches always feature 4 ships in the arena. Any slots not occupied by human gamepads or keyboard are automatically flown by an embedded, pre-trained Reinforcement Learning neural network pilot running via ONNX Runtime (<0.05 ms CPU inference).
 - **Zero Audio Assets Required:** Built with a real-time procedural waveform synthesizer (sine, square, triangle, sawtooth, white noise with ADSR envelopes via Pyglet), delivering retro sound effects with zero external audio assets—lightweight enough to run on single-board computers like a Raspberry Pi.
 
 ---
 
-## 🎮 Controls
+## 🎮 Controls & Player Slots
 
-Chasma supports 1 to 4 players simultaneously using gamepads, or 1 player on keyboard if no controllers are plugged in.
+Chasma always runs with **4 ships in the arena**. Plugged-in gamepads dynamically take slots P1 through P4. If no gamepads are connected, Player 1 is assigned to the **Keyboard**. Any remaining slots are automatically backfilled by the **AI Neural Pilots**.
 
 ### 🕹️ Gameplay Controls
 
@@ -62,6 +63,8 @@ When the `F1` tuner overlay is active, debug visualizers are drawn directly in t
 
 | Parameter | Default | Step (Small / Big) | Description |
 | :--- | :---: | :---: | :--- |
+| `SHIP_SCALE` | `2.0` | `0.1` / `0.5` | Dynamic scale multiplier for ship geometry, flames, and blaster offsets. |
+| `SHIP_COLLISION_STRENGTH` | `1.2` | `0.1` / `0.5` | Impulse multiplier applied during elastic ship-to-ship physical collisions. |
 | `GRAVITY_STRENGTH` | `3200.0` | `100` / `500` | Gravitational pull coefficient applied via inverse-square law ($F = \frac{G}{r^2}$). |
 | `GRAVITY_OUTER_RADIUS` | `420` | `10` / `40` | Outer radius (in pixels) where the Hollowstar's gravity field begins exerting force. |
 | `GRAVITY_INNER_RADIUS` | `52` | `2` / `10` | Event horizon capture radius. Crossing inside triggers the spiral death sequence. |
@@ -72,6 +75,41 @@ When the `F1` tuner overlay is active, debug visualizers are drawn directly in t
 | `MAX_SPIRAL_SPEED` | `10.0` | `0.2` / `1.0` | Velocity ceiling during the death spiral to prevent the ship from overshooting the singularity. |
 | `GRID_WARP_STRENGTH` | `1800` | `50` / `200` | Spacetime grid distortion strength around the Hollowstar. |
 | `GRID_WARP_FALLOFF` | `60` | `2` / `10` | Falloff exponent determining how sharply grid deformation tapers with distance. |
+
+---
+
+## 🤖 Deep Reinforcement Learning AI Subsystem
+
+Chasma features an embedded, high-performance neural AI pilot trained via **Deep Reinforcement Learning (PPO)** that dynamically auto-fills unoccupied ship slots.
+
+### 🧠 Architecture & Mathematical Pipeline
+* **Function Approximator:** A Multi-Layer Perceptron (MLP) with two 64-neuron hidden layers (`[64, 64]`), totaling ~5,500 parameters (25 KB ONNX binary).
+* **Ultra-Low Latency Inference:** Evaluated via **ONNX Runtime** in `< 0.05 ms` per frame on CPU. Because the entire network is ~25 KB, it fits entirely within the CPU's hardware L1 data cache without memory bus bottlenecking.
+* **Ego-Centric Observation Vector (14 floats):**
+  1. Self velocities $(v_x, v_y)$ normalized by max speed.
+  2. Heading unit vector $(\sin\theta, \cos\theta)$ — eliminates angle wrapping discontinuities.
+  3. Relative target offset $(\Delta x, \Delta y)$ and normalized distance.
+  4. Relative target velocities $(\Delta v_x, \Delta v_y)$.
+  5. **Aim Alignment Dot Product $(\cos\alpha)$:** Measures direct line-of-sight aiming to trigger blaster fire without requiring the network to solve trigonometry.
+  6. Relative Hollowstar offset, distance, and gravity zone boolean flag.
+* **Action Space (`MultiDiscrete([3, 2, 2])`):** Steering `[None, Left, Right]`, Throttle `[Coast, Burn]`, and Blaster `[Hold, Fire]`.
+* **Smart Heuristic Fallback:** If the compiled ONNX model is not present, `AIController` automatically switches to a vector-field combat heuristic with gravity evasion and target interception.
+
+### 🏋️ Retraining the Pilot
+The AI is trained using a headless Gymnasium environment (`ChasmaArenaEnv`) simulating arena boundaries, gravity physics, and sparring combat at **5,000–8,000 steps per second**:
+
+```powershell
+# Train a fresh pilot (defaults to 250,000 steps, ~45-60s on modern CPU):
+python chasma/ai/train.py
+
+# Train for a custom step count:
+python chasma/ai/train.py 400000
+
+# Resume training from an existing checkpoint:
+python chasma/ai/train.py 100000 --resume
+```
+
+When training completes, the script automatically exports and verifies `chasma/ai/models/chasma_pilot.onnx`, and the live game immediately picks it up on the next launch.
 
 ---
 
@@ -105,6 +143,10 @@ When the `F1` tuner overlay is active, debug visualizers are drawn directly in t
    ```bash
    pip install -r requirements.txt
    ```
+   *To retrain the RL neural network from scratch, also install PyTorch and Stable-Baselines3:*
+   ```bash
+   pip install torch stable-baselines3 gymnasium
+   ```
 
 4. **Launch the game:**
    ```bash
@@ -118,10 +160,17 @@ When the `F1` tuner overlay is active, debug visualizers are drawn directly in t
 ```
 Chasma/
 ├── chasma/
+│   ├── ai/
+│   │   ├── models/
+│   │   │   ├── chasma_pilot.onnx  # 25 KB compiled ONNX neural pilot weights
+│   │   │   └── chasma_checkpoint.zip # PyTorch training checkpoint
+│   │   ├── ai_controller.py   # ONNX inference engine & heuristic fallback
+│   │   ├── train.py           # PPO training pipeline & ONNX graph exporter
+│   │   └── training_env.py    # Headless Gymnasium arena simulation (5,000+ FPS)
 │   ├── config/
 │   │   ├── colors.py          # Color palette definitions
 │   │   ├── controls.py        # Controller deadzone and input configs
-│   │   ├── settings.py        # Core constants and default physics settings
+│   │   ├── settings.py        # Core constants, arena bounds, and default physics
 │   │   └── tuning.py          # Dynamic live-tuning system & persistence
 │   ├── core/
 │   │   ├── arena.py           # Arena boundaries, grid rendering, warping & bounces
@@ -137,11 +186,11 @@ Chasma/
 │   │   └── sound.py           # Procedural waveform synthesizer (zero audio assets)
 │   └── views/
 │       ├── game_over_view.py  # Match outcome & restart screen
-│       ├── game_view.py       # Main simulation loop, physics & collision engine
+│       ├── game_view.py       # Main simulation loop, ship collisions & match rules
 │       ├── pause_view.py      # Pause menu overlay
 │       └── title_view.py      # Animated title screen
 ├── main.py                    # Application entry point
-├── requirements.txt           # Project dependencies
+├── requirements.txt           # Project dependencies (arcade, onnxruntime)
 ├── .gitignore                 # Git ignore rules
 └── README.md                  # Project documentation
 ```

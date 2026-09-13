@@ -215,16 +215,33 @@ class ChasmaArenaEnv(gym.Env):
             proj_vy = math.cos(rad) * BLASTER_SPEED + self.agent.vy * 0.5
             self.agent_projectiles.append([self.agent.x, self.agent.y, proj_vx, proj_vy, 60])
 
-        # 2. Opponent heuristic sparring movement
+        # 2. Opponent heuristic sparring movement (Dynamic combat flybys)
         opp_dx = self.agent.x - self.opponent.x
         opp_dy = self.agent.y - self.opponent.y
         opp_dist = math.hypot(opp_dx, opp_dy)
-        opp_angle = math.degrees(math.atan2(opp_dx, opp_dy))
-        diff = (opp_angle - self.opponent.angle) % 360
+        direct_angle = math.degrees(math.atan2(opp_dx, opp_dy))
+
+        # Circle-strafe offset when in mid range: aim slightly off-axis to fly orbital arcs
+        if 140.0 <= opp_dist <= 350.0:
+            target_heading = (direct_angle + 55.0) % 360  # Flanking orbital path
+        elif opp_dist < 140.0:
+            target_heading = (direct_angle + 120.0) % 360  # Jousting breakaway
+        else:
+            target_heading = direct_angle  # Direct pursuit when far away
+
+        diff = (target_heading - self.opponent.angle) % 360
         if diff > 180:
             diff -= 360
-        self.opponent.change_angle = ROTATION_SPEED if diff > 5 else (-ROTATION_SPEED if diff < -5 else 0)
-        self.opponent.thrust = THRUST_FORCE if opp_dist > 250 and random.random() < 0.8 else 0.0
+        self.opponent.change_angle = ROTATION_SPEED if diff > 6.0 else (-ROTATION_SPEED if diff < -6.0 else 0)
+
+        # Keep opponent moving dynamically so it never stalls into a stationary target
+        opp_speed = math.hypot(self.opponent.vx, self.opponent.vy)
+        if opp_dist > 350.0:
+            self.opponent.thrust = THRUST_FORCE if abs(diff) < 45.0 else 0.0
+        elif 140.0 <= opp_dist <= 350.0:
+            self.opponent.thrust = THRUST_FORCE if (opp_speed < 4.5 and abs(diff) < 60.0) else 0.0
+        else:
+            self.opponent.thrust = THRUST_FORCE if opp_speed < 5.0 else 0.0
 
         # 3. Apply Hollowstar gravity
         for ship in (self.agent, self.opponent):
@@ -255,9 +272,9 @@ class ChasmaArenaEnv(gym.Env):
             p[0] += p[2]
             p[1] += p[3]
             p[4] -= 1
-            # Check hit on opponent
+            # Check hit on opponent (radius synchronized with 2x scale)
             hit_dist = math.hypot(p[0] - self.opponent.x, p[1] - self.opponent.y)
-            if hit_dist < 20.0:
+            if hit_dist < 28.0:
                 hit_opponent = True
                 self.opponent.vx += (p[2] / BLASTER_SPEED) * BLASTER_KNOCKBACK
                 self.opponent.vy += (p[3] / BLASTER_SPEED) * BLASTER_KNOCKBACK
@@ -275,6 +292,7 @@ class ChasmaArenaEnv(gym.Env):
         alignment = (math.sin(rad) * (dx / max(current_dist, 1))) + (math.cos(rad) * (dy / max(current_dist, 1)))
 
         hs_dist = math.hypot(self.hs_x - self.agent.x, self.hs_y - self.agent.y)
+        speed = math.hypot(self.agent.vx, self.agent.vy)
 
         reward = 0.0
         terminated = False
@@ -288,29 +306,44 @@ class ChasmaArenaEnv(gym.Env):
             # Penalty for lingering in gravitational vortex
             reward -= 0.02 * ((tuning.GRAVITY_OUTER_RADIUS - hs_dist) / tuning.GRAVITY_OUTER_RADIUS)
 
-        # --- B. Aiming & Blaster Hits ---
-        reward += alignment * 0.04
+        # --- B. Blaster Hits & Kinetic Aiming ---
         if hit_opponent:
             reward += 10.0
 
-        # --- C. Dogfight Engagement Distance ---
-        if current_dist > 350.0:
-            # Close in on enemy
-            reward += (self.prev_dist - current_dist) * 0.03
-        elif current_dist < 120.0:
-            # Avoid ramming
-            reward += (current_dist - self.prev_dist) * 0.02
-        else:
-            # In optimal blaster range
-            reward += 0.03
+        # Only reward good aim if actively flying; camping stationary turrets get 0 aim points!
+        if speed >= 1.2:
+            reward += max(0.0, alignment) * 0.04
 
-        # --- D. Throttle Discipline ---
-        speed = math.hypot(self.agent.vx, self.agent.vy)
+        # --- C. Kinetic Movement vs Stagnation (Anti-Camping) ---
+        if speed < 1.2:
+            # Stagnation penalty (sitting still is penalized)
+            reward -= 0.03 * (1.2 - speed)
+        elif 1.8 <= speed <= 5.2:
+            # Cruising reward: encourages healthy dogfighting momentum
+            reward += 0.02
+
+        # --- D. Dogfight Engagement Distance & Interception ---
+        closing_vel = (self.agent.vx * dx + self.agent.vy * dy) / max(current_dist, 1)
+
+        if current_dist > 350.0:
+            # Far range: reward closing in, penalize fleeing or stalling
+            if closing_vel > 0.6:
+                reward += 0.03 * min(closing_vel / 4.0, 1.0)
+            elif closing_vel < -0.6:
+                reward -= 0.015
+        elif current_dist < 100.0:
+            # Ramming avoidance: penalize collision
+            reward -= 0.03
+        else:
+            # Sweet spot (100 - 350 px): optimal dogfight engagement range
+            reward += 0.025
+
+        # --- E. Throttle Discipline ---
         if thrust == 1:
             if speed > 6.0:
-                reward -= 0.02
-            if alignment < -0.2:
-                reward -= 0.03
+                reward -= 0.02  # Prevent out-of-control missile overspeeding
+            if alignment < -0.3:
+                reward -= 0.02  # Discourage burning thrust straight away from target
 
         self.prev_dist = current_dist
         truncated = self.ticks >= self.max_ticks
