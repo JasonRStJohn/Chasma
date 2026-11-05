@@ -1,31 +1,18 @@
 import arcade
-import math
 
 from chasma.config.settings import *
-from chasma.config import tuning
 from chasma.config.colors import ChasmaColors
+from chasma.core.simulation import ArenaBounds
 
 
-class Arena:
+class Arena(ArenaBounds):
     """
     Owns the arena geometry — grid, walls, and boundary collision.
+    Inherits boundary collision and warp math from ArenaBounds.
     """
 
     def __init__(self):
-        self.left = ARENA_LEFT
-        self.right = ARENA_RIGHT
-        self.top = ARENA_TOP
-        self.bottom = ARENA_BOTTOM
-        self.grid_spacing = GRID_SPACING
-        self.wall_thickness = WALL_THICKNESS
-
-    def _warp_point(self, px, py, hx, hy):
-        """Displace a grid vertex toward the Hollowstar."""
-        dx = px - hx
-        dy = py - hy
-        dist = max(math.hypot(dx, dy), 1)
-        warp = tuning.GRID_WARP_STRENGTH / (dist + tuning.GRID_WARP_FALLOFF)
-        return px - dx / dist * warp, py - dy / dist * warp
+        super().__init__()
 
     def _draw_warped_line(self, x1, y1, x2, y2, hx, hy):
         """Draw a line as GRID_WARP_SEGMENTS warped segments."""
@@ -70,34 +57,3 @@ class Arena:
             self.left, self.right, self.bottom, self.top,
             ChasmaColors.GRID_BLUE, self.wall_thickness,
         )
-
-    def bounce(self, entity, dampening=1.0):
-        """
-        Bounce an entity off the arena walls.
-        dampening=1.0 is a perfect bounce, 0.5 loses half velocity, etc.
-        Calls entity.on_bounce_x/on_bounce_y if they exist.
-        """
-        bounced_x = False
-        bounced_y = False
-
-        if entity.center_x < self.left:
-            entity.center_x = self.left
-            entity.velocity_x *= -dampening
-            bounced_x = True
-        elif entity.center_x > self.right:
-            entity.center_x = self.right
-            entity.velocity_x *= -dampening
-            bounced_x = True
-        if entity.center_y < self.bottom:
-            entity.center_y = self.bottom
-            entity.velocity_y *= -dampening
-            bounced_y = True
-        elif entity.center_y > self.top:
-            entity.center_y = self.top
-            entity.velocity_y *= -dampening
-            bounced_y = True
-
-        if bounced_x and hasattr(entity, 'on_bounce_x'):
-            entity.on_bounce_x()
-        if bounced_y and hasattr(entity, 'on_bounce_y'):
-            entity.on_bounce_y()

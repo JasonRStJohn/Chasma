@@ -5,31 +5,20 @@ from arcade.shape_list import ShapeElementList, create_polygon
 from chasma.config.settings import *
 from chasma.config import tuning
 from chasma.config.colors import ChasmaColors
-from chasma.entities.base_entity import BaseEntity
+from chasma.core.simulation import ShipState
+from chasma.entities.projectile import Projectile
 
 
-class Player(BaseEntity):
+class Player(ShipState):
     """
-    The player ship class. Uses manual physics and a ShapeElementList
-    for custom drawing.
+    The player ship class. Inherits physics and combat state from ShipState,
+    and uses an Arcade ShapeElementList for custom desktop drawing.
     """
-    def __init__(self, player_color, center_x, center_y):
-        super().__init__(center_x, center_y)
-
-        self.player_color = player_color
+    def __init__(self, player_color, center_x, center_y, slot=0):
+        super().__init__(player_color=player_color, center_x=center_x, center_y=center_y, slot=slot)
+        self.shape_list = ShapeElementList()
         self._current_scale = getattr(tuning, "SHIP_SCALE", 2.0)
         self._build_shapes(self._current_scale)
-
-        # --- Player-specific attributes ---
-        self.thrust = 0
-        self.lives = PLAYER_LIVES
-        self.alive = True
-        self.fire_cooldown = 0
-        self.wants_to_fire = False
-        self._fire_held = False
-        self.spiraling = False
-        self.spiral_timer = 0
-        self.respawn_timer = -1   # -1 = not pending; >=0 = countdown to respawn
 
     def _build_shapes(self, scale):
         """Construct the polygon meshes at the current scale."""
@@ -44,79 +33,9 @@ class Player(BaseEntity):
         self.shape_list.append(color_shape)
         self._current_scale = s
 
-    @property
-    def collision_radius(self):
-        return 14.0 * getattr(tuning, "SHIP_SCALE", 2.0)
-
-    def apply_input(self, input_state):
-        """Apply an InputState to set rotation and thrust."""
-        if self.spiraling:
-            return
-        self.change_angle = input_state.rotation * ROTATION_SPEED
-        self.thrust = input_state.thrust * THRUST_FORCE
-        self.wants_to_fire = input_state.fire
-
-    def update(self):
-        """Update the ship's position and speed using manual physics."""
-        if not self.alive:
-            return
-
-        if self.spiraling:
-            # Visual spin — actual velocity pull is applied from game_view
-            self.angle += tuning.SPIRAL_SPIN_SPEED
-            self.update_physics()
-            return
-
-        # Rotate the ship
-        self.angle += self.change_angle
-
-        # Apply thrust to calculate acceleration
-        if self.thrust > 0:
-            acceleration_x = math.sin(math.radians(self.angle)) * self.thrust
-            acceleration_y = math.cos(math.radians(self.angle)) * self.thrust
-            self.velocity_x += acceleration_x
-            self.velocity_y += acceleration_y
-
-        # Apply friction to the velocity
-        self.velocity_x *= DRAG_COEFFICIENT
-        self.velocity_y *= DRAG_COEFFICIENT
-
-        # Tick cooldown
-        if self.fire_cooldown > 0:
-            self.fire_cooldown -= 1
-
-        # Move
-        self.update_physics()
-
-    def try_fire(self):
-        """Attempt to fire. Returns a Projectile if successful, None otherwise.
-        Only fires on the rising edge (press, not hold)."""
-        if not self.alive or self.fire_cooldown > 0:
-            return None
-        if not self.wants_to_fire:
-            self._fire_held = False
-            return None
-        if self._fire_held:
-            return None
-        self._fire_held = True
-
-        from chasma.entities.projectile import Projectile
-
-        self.fire_cooldown = BLASTER_COOLDOWN
-
-        # Spawn projectile at the nose of the ship
-        scale = getattr(tuning, "SHIP_SCALE", 2.0)
-        nose_dist = 22 * scale  # just past the ship's tip
-        spawn_x = self.center_x + math.sin(math.radians(self.angle)) * nose_dist
-        spawn_y = self.center_y + math.cos(math.radians(self.angle)) * nose_dist
-
-        return Projectile(
-            owner=self,
-            color=self.player_color,
-            x=spawn_x,
-            y=spawn_y,
-            angle=self.angle,
-        )
+    def try_fire(self, projectile_cls=Projectile):
+        """Attempt to fire, defaulting to the graphical Projectile class on desktop."""
+        return super().try_fire(projectile_cls=projectile_cls)
 
     def draw(self):
         """Draw the ship and thrust flame."""
@@ -128,7 +47,10 @@ class Player(BaseEntity):
         if self._current_scale != current_scale:
             self._build_shapes(current_scale)
 
-        super().draw()
+        self.shape_list.center_x = self.center_x
+        self.shape_list.center_y = self.center_y
+        self.shape_list.angle = self.angle
+        self.shape_list.draw()
 
         # --- Thrust Flame ---
         if self.thrust > 0:
@@ -159,30 +81,3 @@ class Player(BaseEntity):
                 p1[0], p1[1], p2[0], p2[1], p3[0], p3[1],
                 arcade.color.RED,
             )
-
-    def begin_spiral(self):
-        """Enter the point-of-no-return spiral death sequence."""
-        self.spiraling = True
-        self.spiral_timer = tuning.SPIRAL_DURATION
-        self.velocity_x = 0
-        self.velocity_y = 0
-
-    def respawn(self, x, y):
-        """Reset player to a position after a death."""
-        self.center_x = x
-        self.center_y = y
-        self.velocity_x = 0
-        self.velocity_y = 0
-        self.angle = 0
-        self.thrust = 0
-        self.spiraling = False
-        self.spiral_timer = 0
-        self.respawn_timer = -1
-
-    def die(self):
-        """Lose a life. Returns True if eliminated."""
-        self.lives -= 1
-        if self.lives <= 0:
-            self.alive = False
-            return True
-        return False

@@ -1,0 +1,27 @@
+services:
+  chasma-online:
+    build:
+      context: ..
+      dockerfile: online/Dockerfile
+    image: chasma-online:latest
+    container_name: chasma-online
+    restart: unless-stopped
+    ports:
+      # Bound to localhost on the Mac mini so NGINX on the host (or in Docker) can proxy to 8080
+      - "127.0.0.1:8080:8080"
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Optional: If your NGINX Proxy runs in a shared Docker network on the Mac mini,
+    # uncomment the networks block below to connect `chasma-online` directly by container name:
+    # networks:
+    #   - nginx-proxy
+
+# networks:
+#   nginx-proxy:
+#     external: true

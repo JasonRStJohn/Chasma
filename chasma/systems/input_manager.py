@@ -1,17 +1,11 @@
-import arcade
-from dataclasses import dataclass
+try:
+    import arcade
+except ImportError:
+    arcade = None
 
 from chasma.config.settings import *
 from chasma.config.controls import *
-
-
-@dataclass
-class InputState:
-    """Unified input state for one player, per frame."""
-    rotation: float = 0.0   # -1.0 (left) to 1.0 (right)
-    thrust: float = 0.0     # 0.0 to 1.0
-    fire: bool = False       # future use
-    pause: bool = False
+from chasma.core.simulation import InputState
 
 
 class InputManager:

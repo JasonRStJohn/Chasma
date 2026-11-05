@@ -1,0 +1,20 @@
+{
+  "name": "chasma-online-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync": "python ../scripts/sync_online.py",
+    "dev": "python ../scripts/sync_online.py && vite",
+    "build": "python ../scripts/sync_online.py && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}

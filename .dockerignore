@@ -1,0 +1,11 @@
+.git
+.idea
+.venv
+venv
+__pycache__
+*.pyc
+chasma/ai/models/chasma_checkpoint.zip
+online/web/node_modules
+online/web/dist
+planning
+tests

@@ -48,5 +48,8 @@ Thumbs.db
 # Local live-tuning overrides (generated at runtime when tweaking physics)
 tuning.overrides.json
 
+# Node / Web build artifacts
+node_modules/
+
 # Planning and architecture docs
 planning/

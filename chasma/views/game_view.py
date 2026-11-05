@@ -1,69 +1,56 @@
-import math
-
 import arcade
 
 from chasma.config.settings import *
-from chasma.config import tuning
-from chasma.config.colors import ChasmaColors
 from chasma.core.arena import Arena
+from chasma.core.simulation import ChasmaSimulation
 from chasma.entities.hollowstar import Hollowstar
 from chasma.entities.player import Player
+from chasma.entities.projectile import Projectile
 from chasma.systems.debug_tuner import DebugTuner
 from chasma.systems.input_manager import InputManager
 from chasma.ai.ai_controller import AIController
 
 
-# Map color names to actual colors
-_COLOR_MAP = {
-    "PLAYER1_YELLOW": ChasmaColors.PLAYER1_YELLOW,
-    "PLAYER2_RED": ChasmaColors.PLAYER2_RED,
-    "PLAYER3_BLUE": ChasmaColors.PLAYER3_BLUE,
-    "PLAYER4_GREEN": ChasmaColors.PLAYER4_GREEN,
-}
-
-
 class GameView(arcade.View):
-    """Main gameplay view — supports 1-4 players."""
+    """Main gameplay view — supports 1-4 players, backed by ChasmaSimulation."""
 
     def __init__(self):
         super().__init__()
         self.arena = None
-        self.hollowstar = None
-        self.players = []
-        self.projectiles = []
+        self.sim = None
         self.input_manager = None
         self.ai_controller = AIController()
         self.pause_held = False
         self.debug_tuner = DebugTuner()
 
+    @property
+    def hollowstar(self):
+        return self.sim.hollowstar if self.sim else None
+
+    @property
+    def players(self):
+        return self.sim.players if self.sim else []
+
+    @property
+    def projectiles(self):
+        return self.sim.projectiles if self.sim else []
+
     def setup(self):
         """Set up the game and initialize variables."""
         self.arena = Arena()
-        self.projectiles = []
 
         # Use the controllers already opened by ChasmaGame
         self.input_manager = InputManager(self.window.menu_controllers)
         num_human_players = self.input_manager.num_players
 
-        # --- Create players (Always 4 players in arena; AI fills remaining slots) ---
-        TOTAL_PLAYERS = 4
-        self.players = []
-        for i in range(TOTAL_PLAYERS):
-            color_name = PLAYER_COLORS[i]
-            color = _COLOR_MAP[color_name]
-            spawn_x, spawn_y = PLAYER_SPAWNS[i]
-            player = Player(
-                player_color=color,
-                center_x=spawn_x,
-                center_y=spawn_y,
-            )
-            player.is_ai = (i >= num_human_players)
-            self.players.append(player)
-
-        # --- Create Hollowstar in the center ---
-        self.hollowstar = Hollowstar(
-            center_x=SCREEN_WIDTH / 2,
-            center_y=SCREEN_HEIGHT / 2,
+        # Initialize authoritative simulation with Arcade entity classes
+        self.sim = ChasmaSimulation(
+            num_human_players=num_human_players,
+            ship_cls=Player,
+            hollowstar_cls=Hollowstar,
+            projectile_cls=Projectile,
+            arena=self.arena,
+            ai_controller=self.ai_controller,
         )
 
         # HUD text objects — one per player
@@ -116,158 +103,20 @@ class GameView(arcade.View):
         if not any_pause:
             self.pause_held = False
 
-        # --- Gravity field ---
-        for player in self.players:
-            if not player.alive or player.spiraling:
-                continue
-            dx = self.hollowstar.center_x - player.center_x
-            dy = self.hollowstar.center_y - player.center_y
-            distance = math.hypot(dx, dy)
-            if distance < tuning.GRAVITY_OUTER_RADIUS:
-                force = tuning.GRAVITY_STRENGTH / max(distance, tuning.GRAVITY_MIN_DIST) ** 2
-                player.velocity_x += (dx / distance) * force
-                player.velocity_y += (dy / distance) * force
+        # --- Step shared physics & match simulation ---
+        result = self.sim.step(input_states)
 
-        # Apply input and update players
-        for i, player in enumerate(self.players):
-            # Respawn countdown — player is invisible until timer expires
-            if not player.alive and player.respawn_timer >= 0:
-                player.respawn_timer -= 1
-                if player.respawn_timer < 0:
-                    spawn_x, spawn_y = PLAYER_SPAWNS[i]
-                    player.respawn(spawn_x, spawn_y)
-                    player.alive = True
-
-            if player.alive:
-                if getattr(player, "is_ai", False):
-                    ai_input = self.ai_controller.get_input_state(player, self.players, self.hollowstar)
-                    player.apply_input(ai_input)
-                elif i < len(input_states):
-                    player.apply_input(input_states[i])
-            player.update()
-            if player.alive and not player.spiraling:
-                self.arena.bounce(player, dampening=0.5)
-
-            # --- Fire blasters ---
-            proj = player.try_fire()
-            if proj:
-                self.projectiles.append(proj)
-                self.window.sound.play("fire")
-
-        # --- Ship-to-ship collisions ---
-        for i in range(len(self.players)):
-            p1 = self.players[i]
-            if not p1.alive or p1.spiraling:
-                continue
-            for j in range(i + 1, len(self.players)):
-                p2 = self.players[j]
-                if not p2.alive or p2.spiraling:
-                    continue
-
-                dx = p2.center_x - p1.center_x
-                dy = p2.center_y - p1.center_y
-                dist = math.hypot(dx, dy)
-                min_dist = p1.collision_radius + p2.collision_radius
-
-                if dist < min_dist and dist > 0.0001:
-                    # 1. Positional separation (prevent clipping)
-                    overlap = min_dist - dist
-                    nx = dx / dist
-                    ny = dy / dist
-                    p1.center_x -= nx * (overlap * 0.5)
-                    p1.center_y -= ny * (overlap * 0.5)
-                    p2.center_x += nx * (overlap * 0.5)
-                    p2.center_y += ny * (overlap * 0.5)
-
-                    # 2. Elastic bounce impulse with live-tunable strength
-                    rvx = p2.velocity_x - p1.velocity_x
-                    rvy = p2.velocity_y - p1.velocity_y
-                    vel_along_normal = rvx * nx + rvy * ny
-
-                    if vel_along_normal < 0:
-                        restitution = 0.8
-                        impulse_mag = -(1 + restitution) * vel_along_normal * 0.5
-                        bump_boost = getattr(tuning, "SHIP_COLLISION_STRENGTH", 1.2)
-                        total_impulse = (impulse_mag + 1.0) * bump_boost
-
-                        p1.velocity_x -= nx * total_impulse
-                        p1.velocity_y -= ny * total_impulse
-                        p2.velocity_x += nx * total_impulse
-                        p2.velocity_y += ny * total_impulse
-
-                        self.window.sound.play("hit")
-
-        # --- Spiral death sequence ---
-        for i, player in enumerate(self.players):
-            if not player.alive:
-                continue
-
-            dx = self.hollowstar.center_x - player.center_x
-            dy = self.hollowstar.center_y - player.center_y
-            distance = math.hypot(dx, dy)
-
-            if player.spiraling:
-                # Pull hard toward center during spiral
-                force = tuning.GRAVITY_STRENGTH * tuning.SPIRAL_FORCE_MULTIPLIER / max(distance, tuning.GRAVITY_MIN_DIST) ** 2
-                player.velocity_x += (dx / max(distance, 1)) * force
-                player.velocity_y += (dy / max(distance, 1)) * force
-                # Cap velocity so the ship doesn't overshoot the Hollowstar
-                speed = math.hypot(player.velocity_x, player.velocity_y)
-                if speed > tuning.MAX_SPIRAL_SPEED:
-                    player.velocity_x = (player.velocity_x / speed) * tuning.MAX_SPIRAL_SPEED
-                    player.velocity_y = (player.velocity_y / speed) * tuning.MAX_SPIRAL_SPEED
-                player.spiral_timer -= 1
-                if player.spiral_timer <= 0:
-                    player.spiraling = False
-                    player.velocity_x = 0
-                    player.velocity_y = 0
-                    player.alive = False   # ship disappears into the Hollowstar
-                    eliminated = player.die()
-                    self.window.sound.play("death")
-                    if not eliminated:
-                        player.respawn_timer = RESPAWN_DELAY
-            elif distance < tuning.GRAVITY_INNER_RADIUS:
-                player.begin_spiral()
-                self.window.sound.play("suck")
-
-        # --- Update projectiles ---
-        for proj in self.projectiles:
-            proj.update()
-            self.arena.bounce(proj, dampening=1.0)
-
-        # Remove dead projectiles (timed out)
-        self.projectiles = [p for p in self.projectiles if p.alive]
-
-        # --- Projectile-player collisions ---
-        for proj in self.projectiles:
-            for player in self.players:
-                if proj.check_hit(player):
-                    # Apply knockback in the direction the projectile is traveling
-                    angle_rad = math.radians(proj.angle)
-                    player.velocity_x += math.sin(angle_rad) * BLASTER_KNOCKBACK
-                    player.velocity_y += math.cos(angle_rad) * BLASTER_KNOCKBACK
-                    proj.kill()
-                    self.window.sound.play("hit")
-                    break
-
-        # Update Hollowstar
-        self.hollowstar.update()
-        self.arena.bounce(self.hollowstar, dampening=1.0)
+        # Play discrete sound events generated by this step
+        for sound_name in result.events:
+            self.window.sound.play(sound_name)
 
         # --- Check for game over ---
-        # A player is still in the match if they have lives remaining (even mid-respawn)
-        surviving = [p for p in self.players if p.lives > 0]
-        if len(self.players) == 1 and len(surviving) == 0:
-            # Single player mode — game over
+        if result.is_game_over:
             from chasma.views.game_over_view import GameOverView
-            self.window.sound.play("game_over")
-            self.window.show_view(GameOverView())
-        elif len(self.players) > 1 and len(surviving) <= 1:
-            # Multiplayer — last ship standing (or all dead)
-            from chasma.views.game_over_view import GameOverView
-            winner = surviving[0] if surviving else None
-            self.window.sound.play("win" if winner else "game_over")
-            self.window.show_view(GameOverView(winner))
+            if len(self.players) == 1:
+                self.window.show_view(GameOverView())
+            else:
+                self.window.show_view(GameOverView(result.winner))
 
     # --- Keyboard input forwarding ---
     def on_key_press(self, key, modifiers):
