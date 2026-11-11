@@ -78,8 +78,8 @@ class InputManager:
             state.rotation = controller.leftx
 
         # Right trigger for thrust
-        rt = controller.righttrigger
-        if rt is not None and rt > TRIGGER_DEADZONE:
+        rt = self._read_right_trigger(controller)
+        if rt > TRIGGER_DEADZONE:
             state.thrust = rt
 
         # A button for fire (future)
@@ -91,6 +91,39 @@ class InputManager:
             state.pause = True
 
         return state
+
+    @staticmethod
+    def _read_right_trigger(controller) -> float:
+        """
+        Read analog right trigger (R2 / RT) normalized to [0.0, 1.0].
+
+        On Windows DirectInput, PlayStation controllers (DualShock 4 / DualSense)
+        expose R2 both as a digital threshold button (`_button_controls[7]`) and
+        as an analog axis (`ry` / `_axis_controls[4]`). If the mapping binds
+        `righttrigger` to the button (`b7`) or if `_axis_controls` ordering shifts,
+        fall back to reading the raw `ry` trigger axis or digital R2 button.
+        """
+        rt = getattr(controller, "righttrigger", 0.0)
+        if isinstance(rt, (int, float)) and not isinstance(rt, bool) and rt > 0.0:
+            return float(rt)
+
+        # If `righttrigger` was bound to a digital Button (True/False) or stayed 0.0
+        # while the analog trigger axis (`ry` at index 4 on PS DirectInput) is active:
+        axis_controls = getattr(controller, "_axis_controls", None)
+        name = (getattr(controller, "name", "") or "").lower()
+        is_ps = any(k in name for k in ("ps4", "ps5", "playstation", "dualshock", "dualsense", "wireless controller"))
+        if is_ps and axis_controls and len(axis_controls) > 4:
+            ctrl = axis_controls[4]
+            span = getattr(ctrl, "max", 0) - getattr(ctrl, "min", 0)
+            val = getattr(ctrl, "value", None)
+            if span > 0 and val is not None:
+                norm = (val - ctrl.min) / span
+                if norm > 0.0:
+                    return max(0.0, min(1.0, float(norm)))
+
+        if rt:
+            return 1.0
+        return 0.0
 
     def check_any_pause(self):
         """Check if any player is pressing pause. Used to avoid repeated triggers."""

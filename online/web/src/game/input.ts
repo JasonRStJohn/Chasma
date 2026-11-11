@@ -75,6 +75,59 @@ export class WebInputManager {
     this.keysPressed.clear();
   };
 
+  private isPlayStationController(gp: Gamepad): boolean {
+    const id = gp.id.toLowerCase();
+    return (
+      id.includes("054c") ||
+      id.includes("playstation") ||
+      id.includes("dualshock") ||
+      id.includes("dualsense") ||
+      id.includes("wireless controller")
+    );
+  }
+
+  /**
+   * Read the analog Right Trigger (R2 / RT) value normalized to [0.0, 1.0].
+   *
+   * On PC, PlayStation controllers (DualShock 4 / DualSense) over DirectInput / Raw HID
+   * often report R2 in two places simultaneously:
+   *  - `gp.buttons[7]` (DirectInput Button 7): a digital threshold bit (0 or 1), which
+   *    causes `gp.buttons[7].value` to jump from 0.0 straight to 1.0 when pressed.
+   *  - `gp.axes[4]` (or `gp.axes[5]`): the true 8-bit analog trigger axis in [-1.0, +1.0],
+   *    where -1.0 is released and +1.0 is fully depressed.
+   */
+  private readRightTrigger(gp: Gamepad): number {
+    const btn7 = gp.buttons[7];
+    const btnVal = btn7?.value ?? 0;
+
+    // If the browser's standard mapping is already providing fractional analog values on button 7, use it
+    if (btnVal > 0 && btnVal < 1) {
+      return btnVal;
+    }
+
+    // For PlayStation or non-standard controllers on PC, check the analog trigger axis in `gp.axes`
+    if (this.isPlayStationController(gp) || gp.mapping !== "standard") {
+      // On DualShock 4 / DualSense PC HID reports:
+      // axes[0]=LX, axes[1]=LY, axes[2]=RX, axes[3]=L2, axes[4]=R2, axes[5]=RY
+      // (Some drivers order axes[2]=RX, axes[3]=RY, axes[4]=L2, axes[5]=R2)
+      const r2AxisIndex = gp.axes.length >= 5 ? 4 : -1;
+      if (r2AxisIndex !== -1) {
+        const rawAxis = gp.axes[r2AxisIndex];
+        if (typeof rawAxis === "number" && !Number.isNaN(rawAxis)) {
+          // Convert [-1.0, +1.0] range (-1.0 at rest, +1.0 full press) -> [0.0, 1.0]
+          // Note: Before first press, some browsers initialize unpressed axes to 0.0 until moved;
+          // guard against false 50% thrust when button 7 is not pressed and axis is 0.0 at rest.
+          if (rawAxis === 0 && !btn7?.pressed) {
+            return 0.0;
+          }
+          return Math.max(0.0, Math.min(1.0, (rawAxis + 1.0) / 2.0));
+        }
+      }
+    }
+
+    return btnVal;
+  }
+
   public poll(): LocalInputState {
     const state: LocalInputState = {
       rotation: 0.0,
@@ -106,6 +159,7 @@ export class WebInputManager {
 
       const stickDeadzone = CHASMA_CONFIG.controls.STICK_DEADZONE;
       const triggerDeadzone = CHASMA_CONFIG.controls.TRIGGER_DEADZONE;
+      const isPS = this.isPlayStationController(gp) && gp.mapping !== "standard";
 
       // Left stick X (axis 0) or D-Pad Left/Right (buttons 14/15)
       const lx = gp.axes[0] ?? 0;
@@ -117,16 +171,21 @@ export class WebInputManager {
         state.rotation = 1.0;
       }
 
-      // Right trigger (button 7) or Right Bumper (button 5)
-      const rt = gp.buttons[7]?.value ?? 0;
+      // Right trigger (analog R2 / RT) or Right Bumper (R1 / RB, button 5)
+      const rt = this.readRightTrigger(gp);
       if (rt > triggerDeadzone) {
         state.thrust = Math.max(state.thrust, Math.min(1.0, rt));
       } else if (gp.buttons[5]?.pressed) {
         state.thrust = 1.0;
       }
 
-      // A / Cross button (button 0) for Blaster Fire
-      if (gp.buttons[0]?.pressed) {
+      // Cross / A button for Blaster Fire:
+      // Standard mapping places Cross/A at buttons[0], whereas raw DirectInput on PlayStation
+      // places Square at buttons[0] and Cross at buttons[1]. Support buttons[0] (and buttons[1] on raw PS).
+      const firePressed = isPS
+        ? Boolean(gp.buttons[1]?.pressed || gp.buttons[0]?.pressed)
+        : Boolean(gp.buttons[0]?.pressed);
+      if (firePressed) {
         state.fire = true;
         this.onActionConfirm?.();
       }
