@@ -74,6 +74,30 @@ class TestChasmaOnlineServer(unittest.TestCase):
             room = room_manager.get_or_create_room("TEST")
             self.assertTrue(room.sim.players[1].is_ai)
 
+    def test_activity_log_records_join_and_leave(self):
+        with self.assertLogs("chasma", level="INFO") as captured:
+            with self.client.websocket_connect("/ws/LOGT?name=Logger") as ws:
+                json.loads(ws.receive_text())
+            # Disconnect cleanup runs in the server handler after the client closes
+            import time as _time
+            deadline = _time.time() + 2.0
+            while _time.time() < deadline and not any(" leave " in m for m in captured.output):
+                _time.sleep(0.02)
+
+        joins = [m for m in captured.output if "join room=LOGT" in m]
+        leaves = [m for m in captured.output if "leave room=LOGT" in m]
+        self.assertTrue(joins, captured.output)
+        self.assertIn("name=Logger", joins[0])
+        self.assertTrue(leaves, captured.output)
+        self.assertIn("played_sec=", leaves[0])
+        self.assertIn("reason=", leaves[0])
+
+    def test_event_quotes_values_with_spaces(self):
+        from online.server.activity_log import event
+        with self.assertLogs("chasma", level="INFO") as captured:
+            event("join", name="Mr. Wolf")
+        self.assertIn('name="Mr. Wolf"', captured.output[0])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,9 @@ Run locally from repo root:
     uvicorn online.server.app:app --reload --port 8080
 """
 
+import logging
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -14,10 +17,27 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from online.scripts.sync_online import get_runtime_config
+from online.server import activity_log
+from online.server.activity_log import event
 from online.server.room_manager import RoomManager
 
+activity_log.configure()
+_started_at = time.perf_counter()
 
-app = FastAPI(title="Chasma Online Server", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    event("server_start", onnx_loaded=room_manager.ai_controller.session is not None)
+    yield
+    event(
+        "server_stop",
+        uptime_sec=round(time.perf_counter() - _started_at),
+        rooms=len(room_manager.rooms),
+        humans=sum(r.human_count for r in room_manager.rooms.values()),
+    )
+
+
+app = FastAPI(title="Chasma Online Server", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -80,18 +100,27 @@ async def websocket_room_endpoint(
 ):
     room = room_manager.get_or_create_room(room_code)
     client = await room.connect_client(websocket, requested_name=name)
+    reason = "closed"
     try:
         while True:
             raw_text = await websocket.receive_text()
             immediate_reply = room.handle_message(client, raw_text)
             if immediate_reply:
                 await websocket.send_text(immediate_reply)
-    except WebSocketDisconnect:
-        pass
+    except WebSocketDisconnect as exc:
+        reason = f"ws_{exc.code}"
     except Exception:
-        pass
+        reason = "error"
+        event(
+            "ws_error",
+            logging.ERROR,
+            exc_info=True,
+            room=room.room_code,
+            name=client.name,
+            ip=client.ip,
+        )
     finally:
-        room.disconnect_client(client)
+        room.disconnect_client(client, reason=reason)
 
 
 # Mount compiled Vue/TS frontend if `online/web/dist` exists

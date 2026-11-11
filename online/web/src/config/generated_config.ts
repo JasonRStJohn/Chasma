@@ -68,23 +68,23 @@ export const CHASMA_CONFIG = {
     "TRIGGER_DEADZONE": 0.05
   },
   "tuning": {
-    "SHIP_SCALE": 1.4,
+    "SHIP_SCALE": 1.2,
     "SHIP_COLLISION_STRENGTH": 1.2,
-    "GRAVITY_STRENGTH": 2600.0,
-    "GRAVITY_OUTER_RADIUS": 260,
+    "GRAVITY_STRENGTH": 3200.0,
+    "GRAVITY_OUTER_RADIUS": 420,
     "GRAVITY_INNER_RADIUS": 52,
     "GRAVITY_MIN_DIST": 30,
-    "SPIRAL_DURATION": 30,
-    "SPIRAL_FORCE_MULTIPLIER": 7.4,
-    "SPIRAL_SPIN_SPEED": 14,
+    "SPIRAL_DURATION": 50,
+    "SPIRAL_FORCE_MULTIPLIER": 8.0,
+    "SPIRAL_SPIN_SPEED": 15,
     "MAX_SPIRAL_SPEED": 10.0,
     "GRID_WARP_STRENGTH": 1800,
     "GRID_WARP_FALLOFF": 60
   },
   "colors": {
     "GRID_BLUE": [
-      0,
-      127,
+      240,
+      255,
       255
     ],
     "PLAYER1_YELLOW": [
@@ -104,7 +104,7 @@ export const CHASMA_CONFIG = {
     ],
     "PLAYER4_GREEN": [
       0,
-      255,
+      128,
       0
     ],
     "SHIP_GRAY": [
@@ -140,7 +140,7 @@ export const CHASMA_CONFIG = {
       ],
       [
         0,
-        255,
+        128,
         0
       ]
     ]

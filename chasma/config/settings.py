@@ -58,7 +58,7 @@ GRID_WARP_FALLOFF         = 60
 PLAYER_LIVES = 3
 PLAYER_COLORS = ["PLAYER1_YELLOW", "PLAYER2_RED", "PLAYER3_BLUE", "PLAYER4_GREEN"]
 # Live-tunable ship scale and collision physics
-SHIP_SCALE = 2.0
+SHIP_SCALE = 1.2
 SHIP_COLLISION_STRENGTH = 1.2
 
 # Spawn positions: corners of the arena with offset

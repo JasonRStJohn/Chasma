@@ -53,3 +53,6 @@ node_modules/
 
 # Planning and architecture docs
 planning/
+
+# Chasma Online persistent activity log (bind mount)
+online/logs/

@@ -7,11 +7,17 @@ services:
     container_name: chasma-online
     restart: unless-stopped
     ports:
-      # Maps host port 8085 (override via CHASMA_PORT) -> container port 8080
-      # (Avoids conflict with other monolith services already bound to 8080)
-      - "${CHASMA_PORT:-8085}:8080"
+      # Bound to 9999 on the host so NGINX Proxy Manager can proxy to 8080
+      - "0.0.0.0:9999:8080"
     environment:
       - PYTHONUNBUFFERED=1
+      - CHASMA_LOG_DIR=/app/logs
+    volumes:
+      # Persistent activity log (joins/leaves, room lifecycle, errors, heartbeats).
+      # Bind-mounted so it survives `up --build` and container recreation, which
+      # wipe `docker logs`. activity.log rotates at 5 MB x 5; faults.log catches
+      # native crashes (segfaults) that Python itself cannot log.
+      - ./logs:/app/logs
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health')"]
       interval: 30s

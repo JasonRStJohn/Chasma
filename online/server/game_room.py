@@ -4,6 +4,7 @@ Authoritative 60Hz GameRoom coordinator with hot-swapping ONNX AI backfill.
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -12,6 +13,7 @@ from fastapi import WebSocket
 
 from chasma.ai.ai_controller import AIController
 from chasma.core.simulation import ChasmaSimulation, InputState
+from online.server.activity_log import event
 from online.server.protocol import (
     build_state_packet,
     build_welcome_packet,
@@ -23,6 +25,7 @@ TICK_RATE = 60
 TICK_INTERVAL = 1.0 / TICK_RATE
 GAME_OVER_DELAY_SEC = 5.0
 EMPTY_ROOM_GRACE_SEC = 30.0
+HEARTBEAT_SEC = 60.0
 
 
 @dataclass
@@ -34,6 +37,8 @@ class ConnectedClient:
     last_seq: int = 0
     latest_input: InputState = field(default_factory=InputState)
     pending_fire: bool = False  # Captures rising-edge fire presses between ticks
+    ip: str = "?"
+    joined_at: float = field(default_factory=time.perf_counter)
 
 
 class GameRoom:
@@ -59,6 +64,9 @@ class GameRoom:
         self.last_human_time: float = time.perf_counter()
         self._loop_task: Optional[asyncio.Task] = None
         self._running: bool = False
+        self.created_at: float = time.perf_counter()
+        self.matches_finished: int = 0
+        event("room_open", room=self.room_code)
 
     @property
     def human_count(self) -> int:
@@ -92,6 +100,7 @@ class GameRoom:
             websocket=websocket,
             slot=assigned_slot,
             name=default_name,
+            ip=websocket.client.host if websocket.client else "?",
         )
 
         if assigned_slot >= 0:
@@ -110,13 +119,22 @@ class GameRoom:
             self.spectators.append(client)
 
         self.last_human_time = time.perf_counter()
+        event(
+            "join",
+            room=self.room_code,
+            slot=assigned_slot if assigned_slot >= 0 else "spectator",
+            name=client.name,
+            ip=client.ip,
+            humans=self.human_count,
+        )
         await websocket.send_text(build_welcome_packet(self.room_code, assigned_slot))
         await self.broadcast_snapshot([], 0.0)
         self.start_loop()
         return client
 
-    def disconnect_client(self, client: ConnectedClient):
+    def disconnect_client(self, client: ConnectedClient, reason: str = "closed"):
         """Remove a client and immediately hand their slot back to the ONNX AI pilot."""
+        was_present = (0 <= client.slot < 4 and self.slots[client.slot] is client) or client in self.spectators
         if 0 <= client.slot < 4 and self.slots[client.slot] is client:
             self.slots[client.slot] = None
             ship = self.sim.players[client.slot]
@@ -127,6 +145,18 @@ class GameRoom:
 
         if self.human_count > 0:
             self.last_human_time = time.perf_counter()
+
+        if was_present:
+            event(
+                "leave",
+                room=self.room_code,
+                slot=client.slot if client.slot >= 0 else "spectator",
+                name=client.name,
+                ip=client.ip,
+                played_sec=round(time.perf_counter() - client.joined_at),
+                reason=reason,
+                humans=self.human_count,
+            )
 
     def handle_message(self, client: ConnectedClient, raw_text: str) -> Optional[str]:
         """
@@ -150,9 +180,12 @@ class GameRoom:
             if action == "set_name" and 0 <= client.slot < 4:
                 raw_name = str(data.get("name", "")).strip()[:12]
                 if raw_name:
+                    if raw_name != client.name:
+                        event("rename", room=self.room_code, slot=client.slot, old=client.name, new=raw_name)
                     client.name = raw_name
                     self.sim.players[client.slot].name = raw_name
             elif action == "reset_match":
+                event("reset_match", room=self.room_code, by=client.name)
                 self.reset_match()
             elif action == "ping":
                 return json.dumps({"t": "pong", "ts": data.get("ts", 0)}, separators=(",", ":"))
@@ -197,6 +230,15 @@ class GameRoom:
 
         res = self.sim.step(input_map)
         if res.is_game_over:
+            self.matches_finished += 1
+            survivors = [p.name for p in self.sim.players if p.lives > 0]
+            event(
+                "match_over",
+                room=self.room_code,
+                match=self.matches_finished,
+                survivors=",".join(survivors) or "none",
+                humans=self.human_count,
+            )
             self.phase = "game_over"
             self.game_over_until = now + GAME_OVER_DELAY_SEC
             return res.events, GAME_OVER_DELAY_SEC
@@ -229,6 +271,10 @@ class GameRoom:
     async def _run_loop(self):
         """Drift-free 60Hz authoritative room loop."""
         next_tick = time.perf_counter()
+        next_heartbeat = next_tick + HEARTBEAT_SEC
+        max_lag = 0.0  # worst tick lateness since the last heartbeat, seconds
+        ticks = 0
+        reason = "stopped"
         try:
             while self._running:
                 now = time.perf_counter()
@@ -236,9 +282,26 @@ class GameRoom:
                     self.last_human_time = now
                 elif now - self.last_human_time > EMPTY_ROOM_GRACE_SEC:
                     self._running = False
+                    reason = "empty"
                     break
 
+                if now >= next_heartbeat:
+                    event(
+                        "heartbeat",
+                        room=self.room_code,
+                        humans=self.human_count,
+                        players=",".join(c.name for c in self.slots if c is not None) or "none",
+                        phase=self.phase,
+                        ticks=ticks,
+                        max_lag_ms=round(max_lag * 1000, 1),
+                    )
+                    next_heartbeat = now + HEARTBEAT_SEC
+                    max_lag = 0.0
+                    ticks = 0
+
                 if now >= next_tick:
+                    max_lag = max(max_lag, now - next_tick)
+                    ticks += 1
                     events, countdown = self.step_once()
                     if self.human_count > 0:
                         await self.broadcast_snapshot(events, countdown)
@@ -249,4 +312,16 @@ class GameRoom:
                 sleep_for = max(0.0, next_tick - time.perf_counter() - 0.001)
                 await asyncio.sleep(sleep_for)
         except asyncio.CancelledError:
-            pass
+            reason = "evicted"
+        except Exception:
+            # Without this the task dies silently and the room freezes for everyone in it.
+            reason = "crash"
+            event("room_loop_crash", logging.ERROR, exc_info=True, room=self.room_code, humans=self.human_count)
+        finally:
+            event(
+                "room_close",
+                room=self.room_code,
+                reason=reason,
+                lifetime_sec=round(time.perf_counter() - self.created_at),
+                matches=self.matches_finished,
+            )
